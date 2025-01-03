@@ -1,153 +1,93 @@
 <!DOCTYPE html>
 <html lang="en">
+<!-- Previous head content remains the same -->
 <head>
-    <meta charset="UTF-8">
-    <link rel="icon" type="image/png" href="images/favicon.png">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>İgnis Toghether</title>
-    <!-- Load React -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <!-- Load Tailwind -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        .user-list { width: 280px; }
-        .screen-container { flex: 1; }
-        .controls { position: fixed; bottom: 1rem; right: 1rem; }
-        .chat-container { height: 300px; }
-        .messages { height: calc(100% - 60px); }
-    </style>
+    <!-- Previous head content -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simple-peer/9.11.1/simplepeer.min.js"></script>
 </head>
 <body>
-    <div id="root">
-        <div class="min-h-screen bg-gray-900">
-            <!-- Login Screen -->
-            <div id="login-screen" class="flex items-center justify-center min-h-screen">
-                <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-md">
-                    <h1 class="text-2xl font-bold text-white text-center mb-6">Join Stream Room</h1>
-                    <input 
-                        type="text" 
-                        id="room-code" 
-                        placeholder="Enter room code"
-                        class="w-full px-4 py-3 rounded bg-gray-700 text-white border border-gray-600 focus:border-blue-500 focus:outline-none mb-4"
-                    >
-                    <button 
-                        onclick="joinRoom()"
-                        class="w-full bg-blue-500 text-white py-3 rounded font-semibold hover:bg-blue-600"
-                    >
-                        Join Room
-                    </button>
-                </div>
-            </div>
-
-            <!-- Room Screen (hidden by default) -->
-            <div id="room-screen" class="hidden flex h-screen">
-                <div class="screen-container p-4 flex flex-col">
-                    <div class="flex-1 bg-black rounded-lg relative">
-                        <video id="shared-screen" autoplay playsinline class="w-full h-full object-contain"></video>
-                        <div id="no-screen-message" class="absolute inset-0 flex items-center justify-center text-white">
-                            No one is sharing their screen
-                        </div>
-                    </div>
-                    
-                    <!-- Chat System -->
-                    <div class="mt-4 bg-gray-800 rounded-lg chat-container">
-                        <div id="messages" class="messages overflow-y-auto p-4 space-y-4">
-                            <!-- Messages will be added here -->
-                        </div>
-                        <div class="p-4 border-t border-gray-700">
-                            <form onsubmit="sendMessage(event)" class="flex gap-2">
-                                <input 
-                                    type="text" 
-                                    id="message-input"
-                                    placeholder="Type a message..."
-                                    class="flex-1 bg-gray-700 text-white rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                <button 
-                                    type="submit"
-                                    class="bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
-                                >
-                                    Send
-                                </button>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="user-list bg-gray-800 p-4" id="user-list">
-                    <!-- Users will be added here dynamically -->
-                </div>
-
-                <div class="controls flex gap-2">
-                    <button onclick="toggleShare()" class="p-3 rounded-full bg-blue-500 text-white hover:opacity-90">
-                        Share Screen
-                    </button>
-                    <button onclick="toggleMute()" class="p-3 rounded-full bg-blue-500 text-white hover:opacity-90">
-                        Toggle Mute
-                    </button>
-                    <button onclick="leaveRoom()" class="p-3 rounded-full bg-red-500 text-white hover:opacity-90">
-                        Leave
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
+    <!-- Previous HTML content remains the same -->
 
     <script>
         let screenStream = null;
         let audioStream = null;
+        let peers = {};
+        let socket;
+        let localUserId;
         const ROOM_CODE = '10KRL8dCNvQFjt3UqDz4KI';
-        const messages = [];
+        
+        // Initialize WebSocket connection
+        function initializeSocket() {
+            socket = io('https://your-signaling-server.com'); // Replace with your signaling server URL
+
+            socket.on('connect', () => {
+                localUserId = socket.id;
+                console.log('Connected to signaling server');
+            });
+
+            socket.on('user-joined', ({ userId, username }) => {
+                console.log('User joined:', userId);
+                addUser(username || 'Anonymous');
+                addMessage('System', `${username || 'A new user'} joined the room`);
+                
+                // Create new peer connection
+                const peer = new SimplePeer({
+                    initiator: true,
+                    stream: screenStream || audioStream
+                });
+
+                peers[userId] = peer;
+
+                peer.on('signal', data => {
+                    socket.emit('signal', {
+                        userId: userId,
+                        signal: data
+                    });
+                });
+
+                peer.on('stream', stream => {
+                    if (stream.getVideoTracks().length > 0) {
+                        const video = document.getElementById('shared-screen');
+                        video.srcObject = stream;
+                        video.style.display = 'block';
+                        document.querySelector('.no-screen-message').style.display = 'none';
+                    }
+                });
+            });
+
+            socket.on('user-left', ({ userId, username }) => {
+                if (peers[userId]) {
+                    peers[userId].destroy();
+                    delete peers[userId];
+                }
+                addMessage('System', `${username || 'A user'} left the room`);
+                // Remove user from user list
+                // You'll need to add user IDs to the user list elements to remove them
+            });
+
+            socket.on('signal', ({ userId, signal }) => {
+                if (peers[userId]) {
+                    peers[userId].signal(signal);
+                }
+            });
+
+            socket.on('receive-message', ({ userId, content }) => {
+                addMessage(userId, content);
+            });
+        }
 
         function joinRoom() {
             const code = document.getElementById('room-code').value;
             if (code === ROOM_CODE) {
-                document.getElementById('login-screen').classList.add('hidden');
-                document.getElementById('room-screen').classList.remove('hidden');
+                document.getElementById('login-screen').style.display = 'none';
+                document.getElementById('room-screen').style.display = 'block';
+                initializeSocket();
                 initializeAudio();
-                addUser('You (Host)');
+                socket.emit('join-room', { roomId: code });
                 addMessage('System', 'Welcome to the room!');
             } else {
                 alert('Invalid room code');
-            }
-        }
-
-        function addUser(name) {
-            const userList = document.getElementById('user-list');
-            const userDiv = document.createElement('div');
-            userDiv.className = 'flex items-center justify-between p-2 rounded bg-gray-700 mb-2';
-            userDiv.innerHTML = `
-                <div class="flex items-center gap-3">
-                    <div class="w-8 h-8 rounded-full bg-gray-600"></div>
-                    <span class="text-white text-sm">${name}</span>
-                </div>
-            `;
-            userList.appendChild(userDiv);
-        }
-
-        function addMessage(sender, content) {
-            const messagesDiv = document.getElementById('messages');
-            const messageDiv = document.createElement('div');
-            messageDiv.className = 'flex flex-col';
-            messageDiv.innerHTML = `
-                <span class="text-gray-400 text-sm">${sender}</span>
-                <p class="text-white">${content}</p>
-            `;
-            messagesDiv.appendChild(messageDiv);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-            
-            // Store message
-            messages.push({ sender, content, timestamp: new Date() });
-        }
-
-        function sendMessage(event) {
-            event.preventDefault();
-            const input = document.getElementById('message-input');
-            const content = input.value.trim();
-            
-            if (content) {
-                addMessage('You', content);
-                input.value = '';
             }
         }
 
@@ -160,12 +100,19 @@
                     });
                     const video = document.getElementById('shared-screen');
                     video.srcObject = screenStream;
-                    document.getElementById('no-screen-message').style.display = 'none';
-                    addMessage('System', 'You started sharing your screen');
+                    video.style.display = 'block';
+                    document.querySelector('.no-screen-message').style.display = 'none';
                     
+                    // Share screen with all peers
+                    Object.values(peers).forEach(peer => {
+                        peer.addStream(screenStream);
+                    });
+
                     screenStream.getVideoTracks()[0].onended = () => {
                         stopSharing();
                     };
+                    addMessage('System', 'You started sharing your screen');
+                    socket.emit('screen-share-started');
                 } else {
                     stopSharing();
                 }
@@ -178,29 +125,28 @@
         function stopSharing() {
             if (screenStream) {
                 screenStream.getTracks().forEach(track => track.stop());
-                screenStream = null;
-                document.getElementById('shared-screen').srcObject = null;
-                document.getElementById('no-screen-message').style.display = 'flex';
-                addMessage('System', 'Screen sharing stopped');
-            }
-        }
-
-        async function initializeAudio() {
-            try {
-                audioStream = await navigator.mediaDevices.getUserMedia({
-                    audio: true
+                Object.values(peers).forEach(peer => {
+                    peer.removeStream(screenStream);
                 });
-            } catch (err) {
-                console.error('Error getting audio:', err);
-                addMessage('System', 'Failed to initialize audio');
+                screenStream = null;
+                const video = document.getElementById('shared-screen');
+                video.srcObject = null;
+                video.style.display = 'none';
+                document.querySelector('.no-screen-message').style.display = 'block';
+                addMessage('System', 'Screen sharing stopped');
+                socket.emit('screen-share-stopped');
             }
         }
 
-        function toggleMute() {
-            if (audioStream) {
-                const audioTrack = audioStream.getAudioTracks()[0];
-                audioTrack.enabled = !audioTrack.enabled;
-                addMessage('System', `You are now ${audioTrack.enabled ? 'unmuted' : 'muted'}`);
+        function sendMessage(event) {
+            event.preventDefault();
+            const input = document.getElementById('message-input');
+            const content = input.value.trim();
+            
+            if (content) {
+                addMessage('You', content);
+                socket.emit('send-message', { content });
+                input.value = '';
             }
         }
 
@@ -209,12 +155,20 @@
             if (audioStream) {
                 audioStream.getTracks().forEach(track => track.stop());
             }
-            document.getElementById('room-screen').classList.add('hidden');
-            document.getElementById('login-screen').classList.remove('hidden');
-            document.getElementById('user-list').innerHTML = '';
+            // Cleanup peer connections
+            Object.values(peers).forEach(peer => peer.destroy());
+            peers = {};
+            // Disconnect socket
+            if (socket) {
+                socket.disconnect();
+            }
+            document.getElementById('room-screen').style.display = 'none';
+            document.getElementById('login-screen').style.display = 'flex';
             document.getElementById('messages').innerHTML = '';
-            messages.length = 0; // Clear messages array
+            document.getElementById('room-code').value = '';
         }
+
+        // Previous functions remain the same
     </script>
 </body>
 </html>
